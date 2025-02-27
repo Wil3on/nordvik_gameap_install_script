@@ -166,7 +166,7 @@ _unknown_arch ()
 _detect_os
 _detect_arch
 
-gameapctl_version="1.0"
+gameapctl_version="1.01"
 gameapctl_url="https://github.com/Wil3on/nordvik_gameap_gameapctl/archive/refs/tags/dev.tar.gz"
 
 echo "Preparation for installation..."
