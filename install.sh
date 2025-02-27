@@ -166,7 +166,6 @@ _unknown_arch ()
 _detect_os
 _detect_arch
 
-gameapctl_version="0.10.1"
 gameapctl_url="https://github.com/Wil3on/gameapctl/archive/refs/tags/v0.10.1.tar.gz"
 
 echo "Preparation for installation..."
@@ -177,12 +176,12 @@ if ! command -v gameapctl > /dev/null; then
   echo
   echo
   echo "Downloading gameapctl for your operating system..."
-  curl -sL ${gameapctl_url} --output /tmp/gameapctl-v${gameapctl_version}-linux-${cpuarch}.tar.gz &> /dev/null
+  curl -sL ${gameapctl_url} --output /tmp/gameapctl-v0.10.1-linux-${cpuarch}.tar.gz &> /dev/null
 
   echo
   echo
   echo "Unpacking archive..."
-  tar -xvf /tmp/gameapctl-v${gameapctl_version}-linux-${cpuarch}.tar.gz -C /usr/local/bin
+  tar -xvf /tmp/gameapctl-v0.10.1-linux-${cpuarch}.tar.gz -C /usr/local/bin
 
   chmod +x /usr/local/bin/gameapctl
 fi
