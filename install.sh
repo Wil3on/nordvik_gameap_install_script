@@ -708,395 +708,44 @@ _service_restart ()
 
 mysql_service_start ()
 {
-    if ! _service_start mysql; then
-        if ! _service_start mariadb; then
-            echo "Failed to start mysql/mariadb" >> /dev/stderr
-            exit 1
-        fi
-    fi
+    echo "Unfortunately, your architecture are not supported by this script."
+    exit 2
 }
 
-mysql_service_restart ()
-{
-    if ! _service_restart mysql; then
-        if ! _service_restart mariadb; then
-            echo "Failed to restart mysql/mariadb" >> /dev/stderr
-            exit 1
-        fi
-    fi
-}
-
-mysql_setup ()
-{
-    if command -v mysqld > /dev/null; then
-        mysql_manual=1
-
-        echo
-        echo "Detected installed mysql..."
-
-        echo "MySQL configuring skipped."
-        echo "Please configure MySQL manually."
-
-        ask_mysql_credentials
-
-        until mysql -h ${database_hostname} -u ${database_user_name} -p${database_user_password} -e ";" ; do
-            echo
-            echo "Can't connect to MySQL. Invalid credentials. Please retry"
-
-            ask_mysql_credentials
-        done
-    else
-        mysql_manual=0
-
-        database_root_password=$(generate_password)
-        database_user_name="gameap"
-        database_user_password=$(generate_password)
-        database_name="gameap"
-
-        echo debconf mysql-server/root_password password $database_root_password | debconf-set-selections
-        echo debconf mysql-server/root_password_again password $database_root_password | debconf-set-selections
-
-        install_packages "$(get_package_name mysql)"
-        unset mysql_package
-
-        mysql_service_start
-
-        mysql -u root -p${database_root_password} -e 'CREATE DATABASE IF NOT EXISTS `gameap`' &> /dev/null
-
-        mysql -u root -p${database_root_password} -e "USE mysql;\
-            CREATE USER '${database_user_name}'@'%' IDENTIFIED BY '${database_user_password}';\
-            GRANT SELECT ON *.* TO '${database_user_name}'@'%';\
-            GRANT ALL PRIVILEGES ON gameap.* TO '${database_user_name}'@'%';
-            FLUSH PRIVILEGES;"
-
-        if [[ "$?" -ne "0" ]]; then echo "Unable to grant privileges. MySQL seting up failed." >> /dev/stderr; exit 1; fi
-    fi
-}
-
-nginx_setup ()
-{
-    if command -v nginx > /dev/null; then
-        echo "Detected installed nginx..."
-    else
-        add_gpg_key "https://nginx.org/keys/nginx_signing.key"
-
-        if [[ "${os}" = "debian" ]]; then
-            echo "deb http://nginx.org/packages/debian/ ${dist} nginx" | tee /etc/apt/sources.list.d/nginx.list
-        elif [[ "${os}" = "ubuntu" ]]; then
-
-            if [[ "${dist}" != "focal" ]]; then
-                echo "deb http://nginx.org/packages/ubuntu/ ${dist} nginx" | tee /etc/apt/sources.list.d/nginx.list
-            fi
-        fi
-
-        update_packages_list
-        install_packages nginx
-    fi
-
-    if [[ "${dist}" != "focal" ]]; then
-        nginx_gameap_conf_path="/etc/nginx/conf.d/${gameap_server_name}.conf"
-    else
-        nginx_gameap_conf_path="/etc/nginx/sites-enabled/${gameap_server_name}.conf"
-    fi
-
-    curl -SfL https://raw.githubusercontent.com/gameap/auto-install-scripts/master/web-server-configs/nginx-no-ssl.conf \
-        --output "${nginx_gameap_conf_path}" &> /dev/null
-    
-    if [[ "$?" -ne "0" ]]; then
-        echo "Unable to download default nginx config" >> /dev/stderr
-        echo "Nginx configuring skipped" >> /dev/stderr
-        return
-    fi
-
-    sed -i "s/^\(\s*user\s*\).*$/\1www-data\;/" /etc/nginx/nginx.conf
-
-    gameap_public_path="$gameap_path/public"
-
-    if is_ipv4 "${gameap_host}"; then
-        sed -i "s/^\(\s*listen\s*\).*$/\1${gameap_host}\:${gameap_port}\;/" ${nginx_gameap_conf_path}
-    else
-        sed -i "s/^\(\s*server\_name\s*\).*$/\1${gameap_host}\;/" ${nginx_gameap_conf_path}
-        sed -i "s/^\(\s*listen\s*\).*$/\180\;/" ${nginx_gameap_conf_path}
-        sed -i "s/listen 80\;/listen ${gameap_port}\;/" ${nginx_gameap_conf_path}
-    fi;
-
-    sed -i "s/^\(\s*root\s*\).*$/\1${gameap_public_path//\//\\/}\;/" ${nginx_gameap_conf_path}
-    sed -i "s/^\(\s*root\s*\).*$/\1${gameap_public_path//\//\\/}\;/" ${nginx_gameap_conf_path}
-
-    fastcgi_pass=unix:/var/run/php/php${php_version}-fpm.sock
-    sed -i "s/^\(\s*fastcgi_pass\s*\).*$/\1${fastcgi_pass//\//\\/}\;/" ${nginx_gameap_conf_path}
-
-    _service_start nginx
-    _service_start php${php_version}-fpm
-}
-
-apache_setup ()
-{
-    if command -v apache2 > /dev/null; then
-        echo "Detected installed apache..."
-    else
-        install_packages apache2 libapache2-mod-php${php_version}
-    fi
-
-    curl -SfL https://raw.githubusercontent.com/gameap/auto-install-scripts/master/web-server-configs/apache-no-ssl.conf \
-        --output /etc/apache2/sites-available/${gameap_server_name}.conf &> /dev/null
-
-    if [[ "$?" -ne "0" ]]; then
-        echo "Unable to download default Apache config" >> /dev/stderr
-        echo "Apache configuring skipped" >> /dev/stderr
-        return
-    fi
-
-    ln -s /etc/apache2/sites-available/${gameap_server_name}.conf /etc/apache2/sites-enabled/${gameap_server_name}.conf
-
-    gameap_public_path="$gameap_path/public"
-    gameap_ip=$(getent hosts ${gameap_host} | awk '{ print $1 }')
-
-    sed -i "s/^\(\s*<VirtualHost\s*\).*\(:[0-9]*>\)$/\1${gameap_ip}\:${gameap_port}>/" /etc/apache2/sites-available/${gameap_server_name}.conf
-    sed -i "s/^\(\s*ServerName\s*\).*$/\1${gameap_host}/" /etc/apache2/sites-available/${gameap_server_name}.conf
-    sed -i "s/^\(\s*DocumentRoot\s*\).*$/\1${gameap_public_path//\//\\/}/" /etc/apache2/sites-available/${gameap_server_name}.conf
-    sed -i "s/^\(\s*[\<{1}]Directory\s*\).*$/\1${gameap_public_path//\//\\/}>/" /etc/apache2/sites-available/${gameap_server_name}.conf
-
-    # Enable listening on the custom port if it's not 80
-    if [[ "${gameap_port}" != "80" ]]; then
-        echo "Listen ${gameap_port}" >> /etc/apache2/ports.conf
-    fi
-
-    a2enmod rewrite
-    _service_start apache2
-}
-
-ask_user ()
-{
-    if [[ -z "${gameap_path}" ]]; then
-        while true; do
-            echo 
-            read -p "Enter gameap installation path (Example: /var/www/gameap): " gameap_path
-
-            if [[ -z "${gameap_path}" ]]; then
-                gameap_path="/var/www/gameap"
-            fi
-            
-            if [[ ! -s "${gameap_path}" ]]; then
-                    read -p "${gameap_path} not found. Do you wish to make directory? (Y/n): " yn
-                    case $yn in
-                        [Yy]* ) mkdir -p ${gameap_path}; break;;
-                    esac
-            else 
-                break;
-            fi
-        done
-    fi
-
-    if [[ -z "${upgrade:-}" ]]; then
-
-        while [ -z "${gameap_host}" ]; do
-            read -p "Enter gameap host (example.com): " gameap_host
-        done
-
-        gameap_port="80"
-        read -p "Enter gameap panel port [80]: " input_port
-        if [[ ! -z "${input_port}" ]]; then
-            gameap_port="${input_port}"
-        fi
-
-        gameap_server_name="gameap"
-        read -p "Enter gameap Server Name [gameap]: " input_server_name
-        if [[ ! -z "${input_server_name}" ]]; then
-            gameap_server_name="${input_server_name}"
-        fi
-
-        if [[ -z "${db_selected:-}" ]]; then
-            echo
-            echo "Select database to install and configure"
-
-            echo "1) MySQL"
-            echo "2) SQLite"
-            echo "3) None. Do not install a database"
-            echo 
-
-            while true; do
-                read -p "Enter number: " db_selected
-                case $db_selected in
-                    1* ) db_selected="mysql"; echo "Okay! Will try install MySQL..."; break;;
-                    2* ) db_selected="sqlite"; echo "Okay! Will try install SQLite..."; break;;
-                    3* ) db_selected="none"; echo "Okay! ..."; break;;
-                    * ) echo "Please answer 1-3.";;
-                esac
-            done
-        fi
-
-        if [[ -z "${web_selected:-}" ]]; then
-            echo
-            echo "Select Web-server to install and configure"
-
-            echo "1) Nginx (Recommended)"
-            echo "2) Apache"
-            echo "3) None. Do not install a Web Server"
-            echo 
-
-            while true; do
-                read -p "Enter number: " web_selected
-                case $web_selected in
-                    1* ) web_selected="nginx"; echo "Okay! Will try to install Nginx..."; break;;
-                    2* ) web_selected="apache"; echo "Okay! Will try install Apache..."; break;;
-                    3* ) web_selected="none"; echo "Okay! ..."; break;;
-                    * ) echo "Please answer 1-3.";;
-                esac
-            done
-        fi
-
-    fi
-}
-
-ask_mysql_credentials ()
-{
-    read -p "Enter DB host: " database_hostname
-    read -p "Enter DB username: " database_user_name
-    read -p "Enter DB password: " database_user_password
-    read -p "Enter DB name: " database_name
-}
-
-main ()
-{
-    detect_os
-
-    ask_user
-
-    update_packages_list
-
-    curl_check
-    gpg_check
-
-    if ! _detect_source_repository; then
-        echo "Unable to detect source repository" >> /dev/stderr
-        exit 1
-    fi
-
-    from_github=1
-
-    if [[ -n "${upgrade:-}" ]]; then
-        if [[ -n "${from_github:-}" ]]; then
-            upgrade_from_github
-        else
-            upgrade_from_official_repo
-        fi
-
-        exit 0
-    fi
-
-    install_packages software-properties-common apt-transport-https
-
-    php_packages_check
-
-    if [[ -z "${php_version}" ]]; then
-        echo "Unable to find PHP >= 7.3" >> /dev/stderr
-        echo "For Ubuntu 24.04, you may need to manually add the PHP repository:" >> /dev/stderr
-        echo "  sudo add-apt-repository -y ppa:ondrej/php" >> /dev/stderr
-        echo "  sudo apt-get update" >> /dev/stderr
-        echo "  sudo apt-get install -y php8.3" >> /dev/stderr
-        echo "Then try running this script again." >> /dev/stderr
-        exit 1
-    fi
-
-    install_packages php${php_version}-common \
-        php${php_version}-gd \
-        php${php_version}-cli \
-        php${php_version}-fpm \
-        php${php_version}-mysql \
-        php${php_version}-pgsql \
-        php${php_version}-curl \
-        php${php_version}-bz2 \
-        php${php_version}-zip \
-        php${php_version}-xml \
-        php${php_version}-mbstring \
-        php${php_version}-bcmath \
-        php${php_version}-gmp \
-        php${php_version}-intl
-    
-    install_from_github
-
-    case $db_selected in
-        "mysql" )
-            mysql_setup
-
-            sed -i "s/^\(DB\_CONNECTION\s*=\s*\).*$/\1mysql/" .env
-            sed -i "s/^\(DB\_DATABASE\s*=\s*\).*$/\1${database_name}/" .env
-            sed -i "s/^\(DB\_USERNAME\s*=\s*\).*$/\1${database_user_name}/" .env
-            sed -i "s/^\(DB\_PASSWORD\s*=\s*\).*$/\1${database_user_password}/" .env
-        ;;
-
-        "sqlite" ) 
-            install_packages php${php_version}-sqlite
-            database_name="${gameap_path}/database.sqlite"
-            touch $database_name
-
-            sed -i "s/^\(DB\_CONNECTION\s*=\s*\).*$/\1sqlite/" .env
-            sed -i "s/^\(DB\_DATABASE\s*=\s*\).*$/\1${database_name//\//\\/}/" .env
-        ;;
-    esac
-
-    generate_encription_key
-
-    if [[ "${db_selected}" != "none" ]]; then
-        echo "Migrating database..."
-
-        if [[ ${mysql_manual:-0} == 1 ]]; then
-            php artisan migrate
-        else
-            php artisan migrate --seed
-        fi
-
-        if [[ "$?" -ne "0" ]]; then
-            echo "Unable to migrate database." >> /dev/stderr
-            echo "Database seting up aborted." >> /dev/stderr
-            exit 1
-        fi
-        echo "done"
-    fi
-
-    if [[ "${web_selected}" != "none" ]]; then
-        case $web_selected in
-            "nginx" ) nginx_setup;;
-            "apache" ) apache_setup;;
-        esac
-    fi
-
-    chown -R www-data:www-data ${gameap_path}
-    cron_setup
-
-    # Change admin password
-    cd $gameap_path
-    admin_password=$(generate_password)
-    php artisan user:change-password "admin" "${admin_password}"
-
-    echo
-    echo
-    echo
-    echo "---------------------------------"
-    echo "DONE!"
-    echo
-    echo "GameAP file path: ${gameap_path}"
-    echo
-
-    if [[ "${db_selected}" = "sqlite" ]]; then
-        echo "Database: ${database_name}"
-    else
-        if [[ ! -z "$database_root_password" ]]; then echo "Database root password: ${database_root_password}"; fi
-        echo "Database name: gameap"
-        if [[ ! -z "$database_user_name" ]]; then echo "Database user name: ${database_user_name}"; fi
-        if [[ ! -z "$database_user_password" ]]; then echo "Database user password: ${database_user_password}"; fi
-    fi
-
-    echo
-    echo "Administrator credentials"
-    echo "Login: napster or via email nertsent@gmail.com"
-    echo "Password: fpwPOuZD"
-    echo
-    echo "Host: http://${gameap_host}:${gameap_port}"
-    echo
-    echo "---------------------------------"
-}
-
-parse_options "$@"
-main
+_detect_os
+_detect_arch
+
+gameapctl_version="0.6.0"
+gameapctl_url="https://github.com/gameap/gameapctl/releases/download/v${gameapctl_version}/gameapctl-v${gameapctl_version}-linux-${cpuarch}.tar.gz"
+
+echo "Preparation for installation..."
+_curl_check
+_tar_check
+
+if ! command -v gameapctl > /dev/null; then
+  echo
+  echo
+  echo "Downloading gameapctl for your operating system..."
+  curl -sL ${gameapctl_url} --output /tmp/gameapctl-v${gameapctl_version}-linux-${cpuarch}.tar.gz &> /dev/null
+
+  echo
+  echo
+  echo "Unpacking archive..."
+  tar -xvf /tmp/gameapctl-v${gameapctl_version}-linux-${cpuarch}.tar.gz -C /usr/local/bin
+
+  chmod +x /usr/local/bin/gameapctl
+fi
+
+if ! command -v gameapctl > /dev/null; then
+  PATH=$PATH:/usr/local/bin
+fi
+
+echo
+echo
+echo "gameapctl updating..."
+gameapctl self-update
+
+echo
+echo
+echo "Running installation..."
+bash -c "gameapctl panel install $*"
